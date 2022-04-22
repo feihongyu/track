@@ -28,9 +28,10 @@ class Tracker():
 
         self.target_img_path = args.target_img_path
         self.positive_feature_buffer_maximum = 100
-        # self.positive_feature_buffer = numpy.zeros(
-        #     (self.positive_feature_buffer_maximum, 2048 if args.__contains__("feature-net-arch") else 512))
+        # 正样本缓冲区
         self.positive_feature_buffer = None
+        # 原始正样本特征， 优先级高于缓冲区正样本所有正样本
+        self.positive_feature0 = None
 
     def compute_distance(self, features, type=0):
         """
@@ -44,9 +45,15 @@ class Tracker():
         计算距离中原始图片特征规定，一定会用作距离计算。
         :param features: 目标检测特征
         :param type: 权重模式
-        :return: 加权距离
+        :return: 原始正样本距离，正样本缓冲区加权距离
         """
 
+        ###############################原始正样本的距离###########################################
+        distance0 = features - self.positive_feature0
+        distance0 = distance0 ** 2
+        distance0 = numpy.sum(distance0, axis=1)
+
+        ###############################正样本缓冲区的加权距离###########################################
         if type == 0:
             weights_matrix = [[1] for weight in range(1, len(self.positive_feature_buffer) + 1)]
         elif type == 1:
@@ -68,17 +75,14 @@ class Tracker():
         distances = distances * weights_matrix
 
         if type == 0:
-            average_distance_without_weights = numpy.sum(distances, axis=0) / len(self.positive_feature_buffer)
+            average_distance_with_weights = numpy.sum(distances, axis=0) / len(self.positive_feature_buffer)
         else:
             count = 0
             for i in range(1, len(self.positive_feature_buffer) + 1):
                 count += i ** coefficient
-            average_distance_without_weights = numpy.sum(distances, axis=0) / count
+            average_distance_with_weights = numpy.sum(distances, axis=0) / count
 
-        return average_distance_without_weights
-
-    def comput_iou(self):
-        pass
+        return distance0, average_distance_with_weights
 
     def track(self):
         cap = cv2.VideoCapture(self.input_path)
@@ -101,12 +105,12 @@ class Tracker():
         # 原始目标的图片、特征
         target_img = cv2.imread(self.target_img_path)
         target_img_feature0 = self.extractor.extract([target_img, ]).cpu().detach().numpy()
-        # target_img_feature0 = self.extractor.extract([target_img, ])
         current_target_img_feature = target_img_feature0
 
-        # 正样本特征缓存
-        # self.positive_feature_buffer[0] = current_target_img_feature
+        # 正样本缓冲区
         self.positive_feature_buffer = current_target_img_feature
+        # 原始正样本
+        self.positive_feature0 = target_img_feature0
 
         while cap.isOpened() and ret == True and current_frame <= ending_frame:
             tic = time.time()
@@ -116,32 +120,52 @@ class Tracker():
 
             sub_canvases = []
 
-            if current_frame >= 92 * input_fps:
-                print()
-
             for i, box in enumerate(boxes):
                 sub_canvas = canvas[box[1]:box[3], box[0]:box[2], :]
                 cv2.imwrite("images/" + str(i) + ".jpg", sub_canvas)
                 sub_canvases.append(sub_canvas)
 
-            # 检测到目标的时候才能进行计算特征距离
+            """
+                这里有几个阈值：
+                1.原始正样本追踪阈值阈值 = 2.原始正样本存储阈值
+                3.正样本缓冲区追踪阈值 > 4.正样本缓冲区存储阈值
+                
+            """
+            # 检测到目标的时候才进行计算特征距离
             if len(sub_canvases) > 0:
                 features = self.extractor.extract(sub_canvases).cpu().detach().numpy()
-                distances = self.compute_distance(features)
+                # distances_list (原始正样本距离，正样本缓冲区加权距离)
+                distances_list = self.compute_distance(features)
 
-                nearest_distance = numpy.min(distances)
-                off = numpy.argmin(distances, axis=0)
+                positive_feature0_nearest_distance = numpy.min(distances_list[1])
+                positive_feature0_offset = numpy.argmin(distances_list[0], axis=0)
 
-                if nearest_distance < 0.6:
-                    current_target_img_feature = features[off][None]
+                # 原始正样本距离小于0.4，视为直接匹配成功，追踪最小距离目标并把该目标的特征加入缓冲区
+                if positive_feature0_nearest_distance < 0.4:
+                    current_target_img_feature = features[positive_feature0_offset][None]
                     self.positive_feature_buffer = numpy.concatenate(
                         (self.positive_feature_buffer, current_target_img_feature), axis=0)
                     if len(self.positive_feature_buffer) > self.positive_feature_buffer_maximum:
                         self.positive_feature_buffer = self.positive_feature_buffer[
                                                        1: self.positive_feature_buffer_maximum + 1]
-                    plot_one_box(boxes[off], canvas, color=[0, 0, 255])
-            else:
-                pass
+                    plot_one_box(boxes[positive_feature0_offset], canvas, color=[0, 0, 255])
+
+                # 原始正样本距离大于0.4，需要计算正样本缓冲区的距离
+                else:
+                    positive_feature_buffer_nearest_distance = numpy.min(distances_list[1])
+                    positive_feature_buffer_offset = numpy.argmin(distances_list[1], axis=0)
+
+                    # 正样本缓冲区的距离小于1.0时，追踪最小距离目标
+                    if positive_feature_buffer_nearest_distance < 1.0:
+                        current_target_img_feature = features[positive_feature_buffer_offset][None]
+                        # 正样本缓冲区的距离小于0.4时，把该目标的特征加入缓冲区
+                        if positive_feature_buffer_nearest_distance < 0.4:
+                            self.positive_feature_buffer = numpy.concatenate(
+                                (self.positive_feature_buffer, current_target_img_feature), axis=0)
+                            if len(self.positive_feature_buffer) > self.positive_feature_buffer_maximum:
+                                self.positive_feature_buffer = self.positive_feature_buffer[
+                                                               1: self.positive_feature_buffer_maximum + 1]
+                        plot_one_box(boxes[positive_feature_buffer_offset], canvas, color=[0, 0, 255])
 
             # cv2.putText(canvas, "FPS:%f" %(1. / (toc-tic)), (10, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
             out.write(canvas)
