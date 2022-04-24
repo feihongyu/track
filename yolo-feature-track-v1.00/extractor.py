@@ -16,10 +16,10 @@ class Extractor():
         if self.arch == "resnet50":
             model_class = Resnet50FaceModel
 
-        self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
         model = model_class(False).to(self.device)
-        checkpoint = torch.load(weight)
+        checkpoint = torch.load(weight, map_location=self.device)
         model.load_state_dict(checkpoint['state_dict'], strict=False)
         model.eval()
 
