@@ -70,3 +70,4 @@ yolo-feature-track-v1.00/yolov5/utils/__pycache__/plots.cpython-38.pyc
 yolo-feature-track-v1.00/yolov5/utils/__pycache__/torch_utils.cpython-38.pyc
 yolo-feature-track-v1.00/images/19.jpg
 yolo-feature-track-v1.00/images/20.jpg
+yolo-feature-track-v1.00/feature/weights/feature_net_resnet50.pt
