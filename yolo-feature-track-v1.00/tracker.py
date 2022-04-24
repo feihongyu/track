@@ -13,7 +13,9 @@ from yolov5.utils.plots import plot_one_box
 class Tracker():
     def __init__(self, args):
         self.detector = Detector(weight=args.yolov5_weight, persist=True)
-        self.extractor = Extractor(weight=args.feature_net_weight)
+
+        self.extractor = Extractor(weight=args.feature_net_weight, arch=args.feature_net_arch)
+        self.feature_net_arch = args.feature_net_arch
 
         self.input_path = os.path.join(args.input_path)
         filename = os.path.basename(self.input_path)
@@ -131,17 +133,27 @@ class Tracker():
                 3.正样本缓冲区追踪阈值 > 4.正样本缓冲区存储阈值
                 
             """
+
+            if self.feature_net_arch == "resnet18":
+                threshold1 = 0.5
+                threshold3 = 0.7
+                threshold4 = 0.3
+            else:
+                threshold1 = 0.5
+                threshold3 = 0.6
+                threshold4 = 0.3
+
             # 检测到目标的时候才进行计算特征距离
             if len(sub_canvases) > 0:
                 features = self.extractor.extract(sub_canvases).cpu().detach().numpy()
                 # distances_list (原始正样本距离，正样本缓冲区加权距离)
                 distances_list = self.compute_distance(features)
 
-                positive_feature0_nearest_distance = numpy.min(distances_list[1])
+                positive_feature0_nearest_distance = numpy.min(distances_list[0])
                 positive_feature0_offset = numpy.argmin(distances_list[0], axis=0)
 
                 # 原始正样本距离小于0.4，视为直接匹配成功，追踪最小距离目标并把该目标的特征加入缓冲区
-                if positive_feature0_nearest_distance < 0.4:
+                if positive_feature0_nearest_distance < threshold1:
                     current_target_img_feature = features[positive_feature0_offset][None]
                     self.positive_feature_buffer = numpy.concatenate(
                         (self.positive_feature_buffer, current_target_img_feature), axis=0)
@@ -155,11 +167,11 @@ class Tracker():
                     positive_feature_buffer_nearest_distance = numpy.min(distances_list[1])
                     positive_feature_buffer_offset = numpy.argmin(distances_list[1], axis=0)
 
-                    # 正样本缓冲区的距离小于1.0时，追踪最小距离目标
-                    if positive_feature_buffer_nearest_distance < 1.0:
+                    # 正样本缓冲区的距离小于0.5时，追踪最小距离目标
+                    if positive_feature_buffer_nearest_distance < threshold3:
                         current_target_img_feature = features[positive_feature_buffer_offset][None]
-                        # 正样本缓冲区的距离小于0.4时，把该目标的特征加入缓冲区
-                        if positive_feature_buffer_nearest_distance < 0.4:
+                        # 正样本缓冲区的距离小于0.3时，把该目标的特征加入缓冲区
+                        if positive_feature_buffer_nearest_distance < threshold4:
                             self.positive_feature_buffer = numpy.concatenate(
                                 (self.positive_feature_buffer, current_target_img_feature), axis=0)
                             if len(self.positive_feature_buffer) > self.positive_feature_buffer_maximum:
@@ -167,7 +179,6 @@ class Tracker():
                                                                1: self.positive_feature_buffer_maximum + 1]
                         plot_one_box(boxes[positive_feature_buffer_offset], canvas, color=[0, 0, 255])
 
-            # cv2.putText(canvas, "FPS:%f" %(1. / (toc-tic)), (10, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
             out.write(canvas)
 
             toc = time.time()
@@ -175,7 +186,7 @@ class Tracker():
             ret, frame = cap.read()
             current_frame += 1
 
-            print("完成{:.2%}  {:.2}s  toc - tic = {:.2}s".format(current_frame / ending_frame, current_frame / input_fps,
+            print("完成{:.2%}  {}s  toc - tic = {:.2}s".format(current_frame / ending_frame, int(current_frame / input_fps),
                                                                 toc - tic))
 
         cap.release()
