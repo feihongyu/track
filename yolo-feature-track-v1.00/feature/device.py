@@ -1,2 +1,2 @@
 import torch
-device = torch.device("cuda:3")
+device = torch.device("cuda:0")
