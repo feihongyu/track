@@ -19,7 +19,15 @@ class Tracker():
 
         self.input_path = os.path.join(args.input_path)
         filename = os.path.basename(self.input_path)
-        self.output_path = os.path.join(args.output_path, filename)
+        self.output_path = os.path.join(args.output_path, str(args.threshold1) + "," + str(args.threshold2) + "," + str(
+            args.threshold3) + "," + str(args.threshold4))
+        if not os.path.exists(self.output_path):
+            os.makedirs(self.output_path)
+        self.output_path = os.path.join(self.output_path, filename)
+        self.threshold1 = args.threshold1
+        self.threshold2 = args.threshold2
+        self.threshold3 = args.threshold3
+        self.threshold4 = args.threshold4
 
         self.video_type_dict = {
             ".mp4": "mp4v",
@@ -29,7 +37,7 @@ class Tracker():
         }
 
         self.target_img_path = args.target_img_path
-        self.positive_feature_buffer_maximum = 100
+        self.positive_feature_buffer_maximum = 20
         # 正样本缓冲区
         self.positive_feature_buffer = None
         # 原始正样本特征， 优先级高于缓冲区正样本所有正样本
@@ -124,24 +132,31 @@ class Tracker():
 
             for i, box in enumerate(boxes):
                 sub_canvas = canvas[box[1]:box[3], box[0]:box[2], :]
-                cv2.imwrite("images/" + str(i) + ".jpg", sub_canvas)
+                # cv2.imwrite("images/" + str(i) + ".jpg", sub_canvas)
                 sub_canvases.append(sub_canvas)
 
             """
                 这里有几个阈值：
-                1.原始正样本追踪阈值阈值 = 2.原始正样本存储阈值
+                1.原始正样本追踪阈值阈值 <= 2.原始正样本存储阈值
                 3.正样本缓冲区追踪阈值 > 4.正样本缓冲区存储阈值
                 
             """
 
-            if self.feature_net_arch == "resnet18":
-                threshold1 = 0.5
-                threshold3 = 0.7
-                threshold4 = 0.3
-            else:
-                threshold1 = 0.5
-                threshold3 = 0.6
-                threshold4 = 0.3
+            # if self.feature_net_arch == "resnet18":
+            #     threshold1 = 0.4
+            #     threshold2 = 0.4
+            #     threshold3 = 0.65
+            #     threshold4 = 0.2
+            # else:
+            #     threshold1 = 0.7
+            #     threshold2 = 0.3
+            #     threshold3 = 0.4
+            #     threshold4 = 0.2
+
+            threshold1 = self.threshold1
+            threshold2 = self.threshold2
+            threshold3 = self.threshold3
+            threshold4 = self.threshold4
 
             # 检测到目标的时候才进行计算特征距离
             if len(sub_canvases) > 0:
@@ -152,25 +167,27 @@ class Tracker():
                 positive_feature0_nearest_distance = numpy.min(distances_list[0])
                 positive_feature0_offset = numpy.argmin(distances_list[0], axis=0)
 
-                # 原始正样本距离小于0.4，视为直接匹配成功，追踪最小距离目标并把该目标的特征加入缓冲区
+                # 原始正样本距离小于threshold1，视为直接匹配成功，追踪最小距离目标并把该目标的特征加入缓冲区
                 if positive_feature0_nearest_distance < threshold1:
                     current_target_img_feature = features[positive_feature0_offset][None]
-                    self.positive_feature_buffer = numpy.concatenate(
-                        (self.positive_feature_buffer, current_target_img_feature), axis=0)
-                    if len(self.positive_feature_buffer) > self.positive_feature_buffer_maximum:
-                        self.positive_feature_buffer = self.positive_feature_buffer[
-                                                       1: self.positive_feature_buffer_maximum + 1]
+                    # 原始正样本的距离小于threshold2时，把该目标的特征加入正样本缓冲区
+                    if positive_feature0_nearest_distance < threshold2:
+                        self.positive_feature_buffer = numpy.concatenate(
+                            (self.positive_feature_buffer, current_target_img_feature), axis=0)
+                        if len(self.positive_feature_buffer) > self.positive_feature_buffer_maximum:
+                            self.positive_feature_buffer = self.positive_feature_buffer[
+                                                           1: self.positive_feature_buffer_maximum + 1]
                     plot_one_box(boxes[positive_feature0_offset], canvas, color=[0, 0, 255])
 
-                # 原始正样本距离大于0.4，需要计算正样本缓冲区的距离
+                # 原始正样本距离大于threshold1，需要计算正样本缓冲区的距离
                 else:
                     positive_feature_buffer_nearest_distance = numpy.min(distances_list[1])
                     positive_feature_buffer_offset = numpy.argmin(distances_list[1], axis=0)
 
-                    # 正样本缓冲区的距离小于0.5时，追踪最小距离目标
+                    # 正样本缓冲区的距离小于threshold3时，追踪最小距离目标
                     if positive_feature_buffer_nearest_distance < threshold3:
                         current_target_img_feature = features[positive_feature_buffer_offset][None]
-                        # 正样本缓冲区的距离小于0.3时，把该目标的特征加入缓冲区
+                        # 正样本缓冲区的距离小于threshold4时，把该目标的特征加入正样本缓冲区
                         if positive_feature_buffer_nearest_distance < threshold4:
                             self.positive_feature_buffer = numpy.concatenate(
                                 (self.positive_feature_buffer, current_target_img_feature), axis=0)
@@ -186,21 +203,10 @@ class Tracker():
             ret, frame = cap.read()
             current_frame += 1
 
-            print("完成{:.2%}  {}s  toc - tic = {:.2}s".format(current_frame / ending_frame, int(current_frame / input_fps),
-                                                                toc - tic))
+            print(
+                "完成{:.2%}  {}s  toc - tic = {:.2}s".format(current_frame / ending_frame, int(current_frame / input_fps),
+                                                           toc - tic))
 
         cap.release()
         out.release()
         print()
-
-
-class Feature_queue():
-    def __init__(self, feature):
-        self.feature0 = feature
-        self.feature_queue = Queue()
-
-    def put(self, feature):
-        self.feature_queue.put(feature)
-
-    def get(self):
-        return self.feature_queue.get()
