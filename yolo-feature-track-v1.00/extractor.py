@@ -39,7 +39,9 @@ class Extractor():
             h, w = img.shape[:2]
             img1 = cv2.resize(img, (0, 0), fx=self.infer_shape[0] / w, fy=self.infer_shape[1] / h,
                               interpolation=cv2.INTER_CUBIC)
-        img1 = img1.astype(numpy.float32) / 255.
+            img1 = img1.astype(numpy.float32) / 255.
+        else:
+            img1 = img.astype(numpy.float32) / 255.
         img1 = torch.from_numpy(img1.transpose(2, 0, 1)).unsqueeze(0).to(self.device)
         return img0, img1
 
